@@ -5,7 +5,7 @@
 const CORE_ADDON_ID = "ion-core-addon@mozilla.org";
 const ION_SIGNUP_URL = "https://mozilla-ion.github.io/ion-core-addon/";
 
-module.exports = class Rally {
+class Rally {
   /**
    * Initialize the Rally library.
    *
@@ -178,4 +178,10 @@ module.exports = class Rally {
       console.error(`Rally.sendPing - error while sending ${payloadType}`, ex);
     }
   }
+}
+
+// Make this library Require-able.
+/* eslint-env commonjs */
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = Rally;
 }
