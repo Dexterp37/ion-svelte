@@ -2,8 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+const archiver = require("archiver");
 const firefox = require("selenium-webdriver/firefox");
+const fs = require("fs");
 const { Builder, By, until } = require("selenium-webdriver");
+const os = require("os");
+const path = require("path");
 
 // The number of milliseconds to wait for some
 // property to change in tests. This should be
@@ -18,7 +22,7 @@ firefoxOptions.headless();
 
 // This is the path to Firefox Nightly on Ubuntu with the Mozilla PPA.
 if (process.platform === "linux") {
-  firefoxOptions.setBinary("/usr/bin/firefox-trunk");
+  firefoxOptions.setBinary("/usr/bin/firefox");
 } else if (process.platform === "darwin") {
   firefoxOptions.setBinary(
     "/Applications/Firefox Nightly.app/Contents/MacOS/firefox"
@@ -41,6 +45,116 @@ async function findAndAct(driver, element, action) {
   await driver.findElement(element).then(e => action(e));
 }
 
+/**
+ * Get a temporary directory.
+ *
+ * @returns {String} the path to a temporary directory.
+ */
+async function getTempDirectory() {
+  return await new Promise((resolve, reject) => fs.mkdtemp(
+      path.join(os.tmpdir(), 'rally-test-'),
+      (err, directory) => {
+        if (err) {
+          reject(err);
+        }
+        resolve(directory);
+      }
+    )
+  );
+}
+
+/**
+ * Generate a Rally test study add-on.
+ *
+ * @param {String} directory
+ *        The directory in which to create the add-on file.
+ *
+ * @return {String} the full path of the addon file.
+ */
+async function generateTestStudyAddon(directory) {
+  let tempFile =
+    path.join(directory, "test-rally-study.xpi");
+
+  var output = fs.createWriteStream(tempFile);
+  var archive = archiver("zip");
+  archive.on("error", err => { throw err; });
+  archive.pipe(output);
+
+  // Add the manifest file.
+  archive.append(Buffer.from(`
+{
+  "manifest_version": 2,
+  "name": "Rally Integration Test Add-on",
+  "version": "1.0",
+
+  "applications": {
+    "gecko": {
+      "id": "rally-integration-test@mozilla.org",
+      "strict_min_version": "84.0a1"
+    }
+  },
+
+  "permissions": [],
+
+  "background": {
+    "scripts": [
+      "rally.js",
+      "background.js"
+    ]
+  }
+}
+`), { name: "manifest.json" });
+
+  // Add the background.js script.
+  archive.append(Buffer.from(`
+const rally = new Rally();
+
+rally.initialize(
+  // A sample key id used for encrypting data.
+  "sample-invalid-key-id",
+  // A sample *valid* JWK object for the encryption.
+  {
+    "kty":"EC",
+    "crv":"P-256",
+    "x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+    "y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+    "kid":"Public key used in JWS spec Appendix A.3 example"
+  }
+);`), { name: "background.js" });
+
+  // Add the Rally support library.
+  const rallySupport = "./support/rally.js";
+  archive.append(
+    fs.createReadStream(rallySupport), { name: 'rally.js' });
+
+  // Build the addon archive.
+  archive.finalize();
+
+  return tempFile;
+}
+
+/**
+ * TODO
+ *
+ * @param direct
+ */
+async function generateAddonInstallPage(directory, addonPath, options={}) {
+  let filename = (!!options.filename) ? options.filename : "index.html";
+  let pageTitle = (!!options.pageTitle) ? options.pageTitle : "Installation Test";
+  let destinationPath = path.join(directory, filename);
+  let content =
+    `<html><title>${pageTitle}</title><a id="install" href="${addonPath}">Install</a></html>`;
+
+  return await new Promise((resolve, reject) => {
+    fs.writeFile(destinationPath, content, err => {
+      if (err) {
+        reject(err);
+      }
+      resolve(destinationPath);
+    });
+  });
+}
+
 describe("Core-Addon Onboarding", function () {
   // eslint-disable-next-line mocha/no-hooks-for-single-case
   beforeEach(async function () {
@@ -56,12 +170,24 @@ describe("Core-Addon Onboarding", function () {
   });
 
   it("should un/enroll in Rally", async function () {
-    await this.driver.get(`file:///${__dirname}/index.html`);
+    let tempDir = await getTempDirectory();
+    let addonFile = await generateTestStudyAddon(tempDir);
+    let pagePath = await generateAddonInstallPage(tempDir, addonFile);
+
+    await this.driver.get(`file:///${pagePath}`);
     await this.driver.wait(until.titleIs("Installation Test"), WAIT_FOR_PROPERTY);
+    await new Promise(r => setTimeout(r, 2000));
     await findAndAct(this.driver, By.id("install"), e => e.click());
 
     // switch to browser UI context, to interact with Firefox add-on install prompts.
     await this.driver.setContext(firefox.Context.CHROME);
+    await new Promise(r => setTimeout(r, 2000));
+    await this.driver.takeScreenshot().then(data => {
+       var base64Data = data.replace(/^data:image\/png;base64,/,"")
+       fs.writeFile("out.png", base64Data, 'base64', function(err) {
+            if(err) console.log(err);
+       });
+    });
     await findAndAct(this.driver, By.css(`[label="Add"]`), e => e.click());
     await findAndAct(this.driver, By.css(`[label="Okay, Got It"]`), e => e.click());
 
