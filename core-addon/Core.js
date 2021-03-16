@@ -4,6 +4,7 @@
 
 const Storage = require("./Storage.js");
 const DataCollection = require("./DataCollection.js");
+const { default: Glean } = require("@mozilla/glean/webext");
 
 // The path of the embedded resource used to control options.
 const OPTIONS_PAGE_PATH = "public/index.html";
